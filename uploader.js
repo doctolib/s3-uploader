@@ -101,7 +101,8 @@ class S3MultipartUploader {
             // Pre-fill form with resume data if available
             if (this.resumeState) {
                 document.getElementById('accessKey').value = this.resumeState.config.accessKey || '';
-                document.getElementById('secretKey').value = this.resumeState.config.secretKey || '';
+                // Never pre-fill secret key for security
+                document.getElementById('secretKey').value = '';
                 document.getElementById('bucketName').value = this.resumeState.config.bucketName || '';
                 document.getElementById('chunkSize').value = (this.resumeState.partSize / (1024 * 1024)).toString();
                 document.getElementById('objectName').value = this.resumeState.config.objectName || '';
@@ -584,8 +585,11 @@ class S3MultipartUploader {
             partSize: this.partSize,
             uploadedParts: this.parts,
             config: {
-                ...this.config,
+                accessKey: this.config.accessKey,
+                region: this.config.region,
+                bucketName: this.config.bucketName,
                 objectName: this.config.objectName || this.file.name
+                // Never save secretKey for security
             }
         };
         localStorage.setItem('s3_upload_state', JSON.stringify(uploadState));
