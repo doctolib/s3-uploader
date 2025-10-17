@@ -1,4 +1,4 @@
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListObjectsV2Command, ListPartsCommand } from 'https://cdn.jsdelivr.net/npm/@aws-sdk/client-s3@3.911.0/+esm';
+import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListObjectsV2Command, ListPartsCommand } from 'https://cdn.skypack.dev/@aws-sdk/client-s3@3.637.0';
 
 class S3MultipartUploader {
     constructor() {
@@ -67,8 +67,21 @@ class S3MultipartUploader {
             
             const files = e.dataTransfer.files;
             if (files.length > 0) {
-                fileInput.files = files;
+                // Create a new DataTransfer object and assign the files
+                const dataTransfer = new DataTransfer();
+                for (let i = 0; i < files.length; i++) {
+                    dataTransfer.items.add(files[i]);
+                }
+                fileInput.files = dataTransfer.files;
+                
                 fileLabel.textContent = `📁 ${files[0].name} (${this.formatFileSize(files[0].size)})`;
+                
+                // If we have a resume state and this matches the expected file, show resume option
+                if (this.resumeState && files[0].name === this.resumeState.fileName && files[0].size === this.resumeState.fileSize) {
+                    fileLabel.innerHTML = `📁 ${files[0].name} (${this.formatFileSize(files[0].size)}) <span style="color: #28a745;">✅ Ready to resume</span>`;
+                    fileLabel.style.borderColor = '#28a745';
+                    fileLabel.style.backgroundColor = '#f8fff8';
+                }
             }
         });
 
@@ -165,7 +178,10 @@ class S3MultipartUploader {
                 credentials: {
                     accessKeyId: this.config.accessKey,
                     secretAccessKey: this.config.secretKey
-                }
+                },
+                forcePathStyle: false,
+                useAccelerateEndpoint: false,
+                useDualstackEndpoint: false
             });
 
             // Check if object exists
@@ -270,7 +286,6 @@ class S3MultipartUploader {
         const start = (partNumber - 1) * this.partSize;
         const end = Math.min(start + this.partSize, this.file.size);
         const partData = this.file.slice(start, end);
-        const partStartBytes = this.uploadedBytes;
 
         const uploadCommand = new UploadPartCommand({
             Bucket: this.config.bucketName,
@@ -280,10 +295,11 @@ class S3MultipartUploader {
             Body: partData
         });
         
-        const uploadResult = await this.s3.send(uploadCommand);
+        // Simple progress update
+        const progress = ((partNumber - 1) / Math.ceil(this.file.size / this.partSize)) * 100;
+        this.updateProgress(progress, `📊 Uploading part ${partNumber}/${totalParts}...`);
         
-        // Note: Progress tracking for individual parts is more complex in v3
-        // For now, we'll update progress after each part completes
+        const uploadResult = await this.s3.send(uploadCommand);
 
         this.parts.push({
             ETag: uploadResult.ETag,
@@ -292,8 +308,8 @@ class S3MultipartUploader {
 
         // Update final progress for this part
         this.uploadedBytes += partData.size;
-        const progress = (this.uploadedBytes / this.file.size) * 100;
-        this.updateProgress(progress, `📊 Uploading part ${partNumber}/${totalParts}...`);
+        const finalProgress = (this.uploadedBytes / this.file.size) * 100;
+        this.updateProgress(finalProgress, `📊 Part ${partNumber}/${totalParts} completed`);
 
         // Save progress after each part
         this.saveUploadState();
@@ -476,7 +492,10 @@ class S3MultipartUploader {
                 credentials: {
                     accessKeyId: this.config.accessKey,
                     secretAccessKey: this.config.secretKey
-                }
+                },
+                forcePathStyle: false,
+                useAccelerateEndpoint: false,
+                useDualstackEndpoint: false
             });
 
             // Verify upload still exists and get current parts
