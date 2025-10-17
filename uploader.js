@@ -1,4 +1,4 @@
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListObjectsV2Command, ListPartsCommand } from 'https://cdn.jsdelivr.net/gh/aws/aws-sdk-js-v3@v3.911.0/packages/client-s3/dist-es/index.js';
+import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListObjectsV2Command, ListPartsCommand } from 'https://cdn.jsdelivr.net/npm/@aws-sdk/client-s3@3.911.0/+esm';
 
 class S3MultipartUploader {
     constructor() {
