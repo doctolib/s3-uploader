@@ -1,13 +1,14 @@
 # S3 Multipart Uploader Web
 
-Web-based version of the S3 multipart uploader with a modern UI.
+Client-side JavaScript application for uploading files directly to S3 buckets using multipart upload with a modern web UI.
 
 ## Features
 
+- **Client-side JavaScript**: Runs entirely in the browser, pushes files directly to S3
 - **Multipart Upload**: Efficient upload for large files (100MB chunks)
 - **Real-time Progress**: Progress bar with upload speed and ETA
 - **Drag & Drop**: Easy file selection with drag and drop support  
-- **CORS Support**: Direct browser-to-S3 upload (no backend required)
+- **Direct S3 Upload**: No backend server required - uploads straight from browser to bucket
 - **Object Existence Check**: Warns before overwriting existing files
 - **Responsive Design**: Works on desktop and mobile devices
 - **Error Handling**: Graceful permission and network error handling
@@ -40,20 +41,7 @@ Add this CORS configuration to your S3 bucket:
 
 ### 2. Serve the files
 
-You can serve the files using any web server:
-
-```bash
-# Python 3
-python -m http.server 8000
-
-# Node.js (if you have http-server installed)
-npx http-server
-
-# PHP
-php -S localhost:8000
-```
-
-Then open http://localhost:8000 in your browser.
+Serve the HTML files using any web server or open index.html directly in your browser.
 
 ### 3. Upload files
 
@@ -97,14 +85,9 @@ Then open http://localhost:8000 in your browser.
 }
 ```
 
-## Security Considerations
+## How It Works
 
-⚠️ **Important**: This is a client-side application that requires AWS credentials in the browser. For production use:
-
-1. **Use IAM roles with temporary credentials** (STS)
-2. **Implement a backend** to generate presigned URLs
-3. **Restrict IAM permissions** to minimum required
-4. **Use specific CORS origins** instead of "*"
+This is a pure client-side JavaScript application that uses the AWS SDK to upload files directly from the browser to your S3 bucket. The upload happens client-side without any backend server - your files go straight from your browser to S3.
 
 ## Browser Compatibility
 
@@ -121,11 +104,12 @@ Requires support for:
 
 ## Technical Details
 
-- **Part Size**: 100MB per part
-- **Concurrency**: 3 simultaneous uploads
-- **AWS SDK**: v2.1471.0 (loaded from CDN)
-- **Upload Method**: S3 Multipart Upload API
+- **Language**: Pure JavaScript (no build process required)
+- **AWS SDK**: Loaded from CDN, uses S3 Multipart Upload API
+- **Part Size**: 100MB chunks for efficient large file handling
+- **Concurrency**: 3 simultaneous part uploads
 - **Progress Tracking**: Real-time with speed and ETA calculation
+- **Direct Upload**: Files stream from browser directly to S3 bucket
 
 ## Differences from CLI version
 
