@@ -1,3 +1,5 @@
+import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListObjectsV2Command, ListPartsCommand } from 'https://cdn.jsdelivr.net/gh/aws/aws-sdk-js-v3@v3.911.0/packages/client-s3/dist-es/index.js';
+
 class S3MultipartUploader {
     constructor() {
         this.partSize = 100 * 1024 * 1024; // Default 100MB, will be set from form
@@ -157,14 +159,14 @@ class S3MultipartUploader {
             // Set object name
             this.config.objectName = document.getElementById('objectName').value || this.file.name;
 
-            // Configure AWS SDK
-            AWS.config.update({
-                accessKeyId: this.config.accessKey,
-                secretAccessKey: this.config.secretKey,
-                region: this.config.region
+            // Configure AWS SDK v3
+            this.s3 = new S3Client({
+                region: this.config.region,
+                credentials: {
+                    accessKeyId: this.config.accessKey,
+                    secretAccessKey: this.config.secretKey
+                }
             });
-
-            this.s3 = new AWS.S3();
 
             // Check if object exists
             await this.checkObjectExists();
@@ -181,11 +183,12 @@ class S3MultipartUploader {
 
         try {
             // Try to list objects with prefix to check existence
-            const result = await this.s3.listObjectsV2({
+            const command = new ListObjectsV2Command({
                 Bucket: this.config.bucketName,
                 Prefix: this.config.objectName,
                 MaxKeys: 1
-            }).promise();
+            });
+            const result = await this.s3.send(command);
 
             // Check if exact match exists
             const existingObject = result.Contents?.find(obj => obj.Key === this.config.objectName);
@@ -223,10 +226,11 @@ class S3MultipartUploader {
             this.updateProgress(0, '🚀 Starting multipart upload...');
 
             // Create multipart upload
-            const createResult = await this.s3.createMultipartUpload({
+            const createCommand = new CreateMultipartUploadCommand({
                 Bucket: this.config.bucketName,
                 Key: this.config.objectName
-            }).promise();
+            });
+            const createResult = await this.s3.send(createCommand);
 
             this.uploadId = createResult.UploadId;
 
@@ -248,11 +252,12 @@ class S3MultipartUploader {
             if (this.uploadId) {
                 // Abort multipart upload on error
                 try {
-                    await this.s3.abortMultipartUpload({
+                    const abortCommand = new AbortMultipartUploadCommand({
                         Bucket: this.config.bucketName,
                         Key: this.config.objectName,
                         UploadId: this.uploadId
-                    }).promise();
+                    });
+                    await this.s3.send(abortCommand);
                 } catch (abortError) {
                     console.error('Failed to abort multipart upload:', abortError);
                 }
@@ -267,25 +272,18 @@ class S3MultipartUploader {
         const partData = this.file.slice(start, end);
         const partStartBytes = this.uploadedBytes;
 
-        const uploadResult = await this.s3.uploadPart({
+        const uploadCommand = new UploadPartCommand({
             Bucket: this.config.bucketName,
             Key: this.config.objectName,
             PartNumber: partNumber,
             UploadId: this.uploadId,
             Body: partData
-        }).on('httpUploadProgress', (progressEvent) => {
-            // Throttle progress updates to prevent UI lag
-            const now = Date.now();
-            if (now - this.lastProgressUpdate > 100) { // Update max every 100ms
-                this.lastProgressUpdate = now;
-                
-                const partProgress = progressEvent.loaded;
-                const totalUploadedBytes = partStartBytes + partProgress;
-                const progress = (totalUploadedBytes / this.file.size) * 100;
-                
-                this.updateProgress(progress, `📊 Uploading part ${partNumber}/${totalParts}...`);
-            }
-        }).promise();
+        });
+        
+        const uploadResult = await this.s3.send(uploadCommand);
+        
+        // Note: Progress tracking for individual parts is more complex in v3
+        // For now, we'll update progress after each part completes
 
         this.parts.push({
             ETag: uploadResult.ETag,
@@ -305,14 +303,16 @@ class S3MultipartUploader {
         // Sort parts by part number
         this.parts.sort((a, b) => a.PartNumber - b.PartNumber);
 
-        await this.s3.completeMultipartUpload({
+        const completeCommand = new CompleteMultipartUploadCommand({
             Bucket: this.config.bucketName,
             Key: this.config.objectName,
             UploadId: this.uploadId,
             MultipartUpload: {
                 Parts: this.parts
             }
-        }).promise();
+        });
+        
+        await this.s3.send(completeCommand);
 
         const totalTime = Date.now() - this.startTime;
         const avgSpeed = (this.file.size / (totalTime / 1000)) / (1024 * 1024);
@@ -470,13 +470,14 @@ class S3MultipartUploader {
                 existingParts: this.parts.length
             });
 
-            // Configure AWS SDK
-            AWS.config.update({
-                accessKeyId: this.config.accessKey,
-                secretAccessKey: this.config.secretKey,
-                region: this.config.region
+            // Configure AWS SDK v3
+            this.s3 = new S3Client({
+                region: this.config.region,
+                credentials: {
+                    accessKeyId: this.config.accessKey,
+                    secretAccessKey: this.config.secretKey
+                }
             });
-            this.s3 = new AWS.S3();
 
             // Verify upload still exists and get current parts
             await this.verifyAndResumeUpload();
@@ -500,11 +501,12 @@ class S3MultipartUploader {
             });
 
             // List existing parts
-            const listResult = await this.s3.listParts({
+            const listCommand = new ListPartsCommand({
                 Bucket: this.config.bucketName,
                 Key: this.config.objectName,
                 UploadId: this.uploadId
-            }).promise();
+            });
+            const listResult = await this.s3.send(listCommand);
 
             console.log('S3 ListParts result:', listResult);
 
