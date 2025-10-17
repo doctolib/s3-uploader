@@ -483,7 +483,17 @@ class S3MultipartUploader {
             }
 
             // Restore state
-            this.config = this.resumeState.config;
+            this.config = {
+                ...this.resumeState.config,
+                // Get secretKey from the form since it's not saved for security
+                secretKey: document.getElementById('secretKey').value
+            };
+
+            // Validate that secretKey is provided
+            if (!this.config.secretKey) {
+                throw new Error('Secret Key is required to resume upload. Please enter it in the form.');
+            }
+
             this.uploadId = this.resumeState.uploadId;
             this.partSize = this.resumeState.partSize;
             this.parts = this.resumeState.uploadedParts || [];
