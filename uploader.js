@@ -85,16 +85,6 @@ class S3MultipartUploader {
             }
         });
 
-        // Overwrite dialog handlers
-        document.getElementById('cancelOverwrite').addEventListener('click', () => {
-            document.getElementById('overwriteDialog').style.display = 'none';
-            this.setUploadStatus(false);
-        });
-
-        document.getElementById('confirmOverwrite').addEventListener('click', () => {
-            document.getElementById('overwriteDialog').style.display = 'none';
-            this.proceedWithUpload();
-        });
 
         // Resume dialog handlers
         document.getElementById('cancelResume').addEventListener('click', () => {
@@ -210,7 +200,7 @@ class S3MultipartUploader {
             const existingObject = result.Contents?.find(obj => obj.Key === this.config.objectName);
             
             if (existingObject) {
-                this.showOverwriteDialog();
+                throw new Error(`File "${this.config.objectName}" already exists in bucket "${this.config.bucketName}". Upload cancelled to prevent overwrite.`);
             } else {
                 this.proceedWithUpload();
             }
@@ -226,12 +216,6 @@ class S3MultipartUploader {
         }
     }
 
-    showOverwriteDialog() {
-        const dialog = document.getElementById('overwriteDialog');
-        const message = document.getElementById('overwriteMessage');
-        message.textContent = `Object "${this.config.objectName}" already exists in bucket "${this.config.bucketName}". Do you want to overwrite it?`;
-        dialog.style.display = 'block';
-    }
 
     async proceedWithUpload() {
         try {
@@ -278,6 +262,12 @@ class S3MultipartUploader {
                     console.error('Failed to abort multipart upload:', abortError);
                 }
             }
+            
+            // Handle specific overwrite error
+            if (error.name === 'PreconditionFailed' || error.code === 'PreconditionFailed') {
+                throw new Error(`❌ File "${this.config.objectName}" already exists and cannot be overwritten due to bucket policy.`);
+            }
+            
             throw error;
         }
     }
@@ -327,8 +317,27 @@ class S3MultipartUploader {
                 Parts: this.parts
             }
         });
+        // Add conditional write header for completion
+        completeCommand.middlewareStack.add(
+            (next) => async (args) => {
+                args.request.headers['if-none-match'] = '*';
+                return next(args);
+            },
+            { step: 'build' }
+        );
         
-        await this.s3.send(completeCommand);
+        try {
+            await this.s3.send(completeCommand);
+        } catch (error) {
+            // Handle specific overwrite error
+            if (error.name === 'PreconditionFailed' || error.code === 'PreconditionFailed') {
+                this.showError(`File "${this.config.objectName}" already exists and cannot be overwritten due to bucket policy.`);
+                this.setUploadStatus(false);
+                return;
+            }
+            // Re-throw other errors to be handled by proceedWithUpload
+            throw error;
+        }
 
         const totalTime = Date.now() - this.startTime;
         const avgSpeed = (this.file.size / (totalTime / 1000)) / (1024 * 1024);
