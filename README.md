@@ -9,7 +9,7 @@ Client-side JavaScript application for uploading files directly to S3 buckets us
 - **Real-time Progress**: Progress bar with upload speed and ETA
 - **Drag & Drop**: Easy file selection with drag and drop support  
 - **Direct S3 Upload**: No backend server required - uploads straight from browser to bucket
-- **Object Existence Check**: Warns before overwriting existing files
+- **Conditional Writes**: Prevents accidental overwrites using S3 conditional headers
 - **Responsive Design**: Works on desktop and mobile devices
 - **Error Handling**: Graceful permission and network error handling
 
