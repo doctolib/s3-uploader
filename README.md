@@ -53,13 +53,10 @@ Serve the HTML files using any web server or open index.html directly in your br
 ## AWS Permissions
 
 ### Minimum Required
-- `s3:PutObject` - Upload files
-- `s3:PutObjectAcl` - Set object permissions
+- `s3:PutObject` - Upload files (includes multipart operations)
 
 ### Recommended 
 - `s3:PutObject` - Upload files
-- `s3:ListBucket` - Check if objects exist
-- `s3:PutObjectAcl` - Set object permissions
 - `s3:AbortMultipartUpload` - Clean up failed uploads
 
 ### Example IAM Policy
@@ -72,14 +69,9 @@ Serve the HTML files using any web server or open index.html directly in your br
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:PutObjectAcl",
-                "s3:ListBucket",
                 "s3:AbortMultipartUpload"
             ],
-            "Resource": [
-                "arn:aws:s3:::your-bucket-name",
-                "arn:aws:s3:::your-bucket-name/*"
-            ]
+            "Resource": "arn:aws:s3:::your-bucket-name/*"
         }
     ]
 }
