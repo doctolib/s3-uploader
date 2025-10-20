@@ -94,6 +94,8 @@ class S3MultipartUploader {
             // Unlock chunk size for new upload
             document.getElementById('chunkSize').disabled = false;
             document.getElementById('chunkSize').style.backgroundColor = '';
+            // Reset button text to Start Upload
+            document.getElementById('uploadBtn').textContent = 'Start Upload';
         });
 
         document.getElementById('confirmResume').addEventListener('click', () => {
@@ -112,6 +114,9 @@ class S3MultipartUploader {
                 fileLabel.innerHTML = `📁 Please select: <strong>${this.resumeState.fileName}</strong> (${this.formatFileSize(this.resumeState.fileSize)})`;
                 fileLabel.style.borderColor = '#ff9500';
                 fileLabel.style.backgroundColor = '#fff8e1';
+                
+                // Change button text to Resume Upload
+                document.getElementById('uploadBtn').textContent = 'Resume Upload';
             }
             // Lock chunk size to prevent issues with existing parts
             document.getElementById('chunkSize').disabled = true;
@@ -175,8 +180,8 @@ class S3MultipartUploader {
                 useDualstackEndpoint: false
             });
 
-            // Check if object exists
-            await this.checkObjectExists();
+            // Proceed directly with upload (no object existence check)
+            this.proceedWithUpload();
 
         } catch (error) {
             console.error('Upload error:', error);
@@ -185,37 +190,6 @@ class S3MultipartUploader {
         }
     }
 
-    async checkObjectExists() {
-        this.updateProgress(0, '🔍 Checking object existence...');
-
-        try {
-            // Try to list objects with prefix to check existence
-            const command = new ListObjectsV2Command({
-                Bucket: this.config.bucketName,
-                Prefix: this.config.objectName,
-                MaxKeys: 1
-            });
-            const result = await this.s3.send(command);
-
-            // Check if exact match exists
-            const existingObject = result.Contents?.find(obj => obj.Key === this.config.objectName);
-            
-            if (existingObject) {
-                throw new Error(`File "${this.config.objectName}" already exists in bucket "${this.config.bucketName}". Upload cancelled to prevent overwrite.`);
-            } else {
-                this.proceedWithUpload();
-            }
-
-        } catch (error) {
-            // If no ListBucket permission, skip check and proceed
-            if (error.code === 'AccessDenied' || error.code === 'Forbidden') {
-                this.updateProgress(0, '⚠️ No ListBucket permission - will overwrite if exists');
-                setTimeout(() => this.proceedWithUpload(), 1000);
-            } else {
-                throw error;
-            }
-        }
-    }
 
 
     async proceedWithUpload() {
@@ -347,6 +321,9 @@ class S3MultipartUploader {
         
         // Clear resume data on successful completion
         this.clearResumeData();
+        this.resumeState = null;
+        // Reset button text after successful upload
+        document.getElementById('uploadBtn').textContent = 'Start Upload';
         this.showSuccess(`
             📁 File: ${this.file.name} (${this.formatFileSize(this.file.size)})<br>
             📍 Destination: s3://${this.config.bucketName}/${this.config.objectName}<br>
@@ -482,8 +459,14 @@ class S3MultipartUploader {
                 throw new Error(`File size mismatch. Expected ${this.formatFileSize(this.resumeState.fileSize)}, got ${this.formatFileSize(this.file.size)}.`);
             }
 
-            // Restore state
-            this.config = this.resumeState.config;
+            // Restore state with fresh credentials from form
+            this.config = {
+                accessKey: document.getElementById('accessKey').value,
+                secretKey: document.getElementById('secretKey').value,
+                region: this.resumeState.config.region,
+                bucketName: this.resumeState.config.bucketName,
+                objectName: this.resumeState.config.objectName
+            };
             this.uploadId = this.resumeState.uploadId;
             this.partSize = this.resumeState.partSize;
             this.parts = this.resumeState.uploadedParts || [];

@@ -9,7 +9,7 @@ Client-side JavaScript application for uploading files directly to S3 buckets us
 - **Real-time Progress**: Progress bar with upload speed and ETA
 - **Drag & Drop**: Easy file selection with drag and drop support  
 - **Direct S3 Upload**: No backend server required - uploads straight from browser to bucket
-- **Object Existence Check**: Warns before overwriting existing files
+- **Conditional Writes**: Prevents accidental overwrites using S3 conditional headers
 - **Responsive Design**: Works on desktop and mobile devices
 - **Error Handling**: Graceful permission and network error handling
 
@@ -29,7 +29,7 @@ Add this CORS configuration to your S3 bucket:
             "POST", 
             "DELETE"
         ],
-        "AllowedOrigins": ["*"],
+        "AllowedOrigins": ["https://your-domain.com"],
         "ExposeHeaders": [
             "ETag",
             "x-amz-request-id"
@@ -53,13 +53,10 @@ Serve the HTML files using any web server or open index.html directly in your br
 ## AWS Permissions
 
 ### Minimum Required
-- `s3:PutObject` - Upload files
-- `s3:PutObjectAcl` - Set object permissions
+- `s3:PutObject` - Upload files (includes multipart operations)
 
 ### Recommended 
 - `s3:PutObject` - Upload files
-- `s3:ListBucket` - Check if objects exist
-- `s3:PutObjectAcl` - Set object permissions
 - `s3:AbortMultipartUpload` - Clean up failed uploads
 
 ### Example IAM Policy
@@ -72,14 +69,9 @@ Serve the HTML files using any web server or open index.html directly in your br
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:PutObjectAcl",
-                "s3:ListBucket",
                 "s3:AbortMultipartUpload"
             ],
-            "Resource": [
-                "arn:aws:s3:::your-bucket-name",
-                "arn:aws:s3:::your-bucket-name/*"
-            ]
+            "Resource": "arn:aws:s3:::your-bucket-name/*"
         }
     ]
 }
