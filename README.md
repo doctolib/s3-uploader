@@ -29,7 +29,7 @@ Add this CORS configuration to your S3 bucket:
             "POST", 
             "DELETE"
         ],
-        "AllowedOrigins": ["*"],
+        "AllowedOrigins": ["https://your-domain.com"],
         "ExposeHeaders": [
             "ETag",
             "x-amz-request-id"
