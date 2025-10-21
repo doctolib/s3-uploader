@@ -103,13 +103,3 @@ Requires support for:
 - **Progress Tracking**: Real-time with speed and ETA calculation
 - **Direct Upload**: Files stream from browser directly to S3 bucket
 
-## Differences from CLI version
-
-| Feature | CLI Version | Web Version |
-|---------|-------------|-------------|
-| File size limit | Unlimited | ~2-4GB (browser memory) |
-| Credentials | Interactive prompt | Form input |
-| Progress display | Terminal output | Web progress bar |
-| File selection | Path input | File picker + drag/drop |
-| Error handling | Exit codes | User-friendly messages |
-| CORS requirement | No | Yes (S3 bucket config) |
