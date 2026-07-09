@@ -1,105 +1,64 @@
-# S3 Multipart Uploader Web
+# Secure Log Uploader
 
-Client-side JavaScript application for uploading files directly to S3 buckets using multipart upload with a modern web UI.
+Client-side JavaScript application for uploading log bundles directly to S3 using a
+presigned URL. No AWS credentials are handled in the browser.
 
 ## Features
 
-- **Client-side JavaScript**: Runs entirely in the browser, pushes files directly to S3
-- **Multipart Upload**: Efficient upload for large files (100MB chunks)
-- **Real-time Progress**: Progress bar with upload speed and ETA
-- **Drag & Drop**: Easy file selection with drag and drop support  
-- **Direct S3 Upload**: No backend server required - uploads straight from browser to bucket
-- **Conditional Writes**: Prevents accidental overwrites using S3 conditional headers
-- **Responsive Design**: Works on desktop and mobile devices
-- **Error Handling**: Graceful permission and network error handling
+- **Presigned URL upload**: the browser does a single HTTP `PUT` to a short-lived
+  presigned URL. It never sees AWS access keys.
+- **Real-time Progress**: progress bar with upload speed and ETA
+- **Drag & Drop**: easy file selection
+- **Server-side encryption**: the bucket's default SSE-KMS applies automatically, so
+  the object always lands encrypted without the client sending any header.
+- **Responsive Design**: works on desktop and mobile
 
-## Usage
+## How it works
 
-### 1. Setup CORS on your S3 bucket
+1. The page is served behind Cloudflare Access (SSO + device posture for internal
+   users, one-time PIN for external practitioners).
+2. On load, the page calls the broker (`GET /api/upload-url`), which validates the
+   authenticated identity and returns a short-lived presigned `PUT` URL scoped to a
+   single object key.
+3. The browser `PUT`s the file straight to S3. No credentials, no backend upload hop,
+   no file on a support agent's machine.
 
-Add this CORS configuration to your S3 bucket:
+For staging tests you can skip the broker and paste a presigned URL into the field
+(generate one with a `generate_presigned_url` PUT helper).
+
+## Setup
+
+### CORS on the bucket
 
 ```json
 [
     {
         "AllowedHeaders": ["*"],
-        "AllowedMethods": [
-            "GET", 
-            "PUT", 
-            "POST", 
-            "DELETE"
-        ],
-        "AllowedOrigins": ["https://your-domain.com"],
-        "ExposeHeaders": [
-            "ETag",
-            "x-amz-request-id"
-        ],
+        "AllowedMethods": ["PUT"],
+        "AllowedOrigins": ["https://your-uploader-domain"],
+        "ExposeHeaders": ["ETag"],
         "MaxAgeSeconds": 3000
     }
 ]
 ```
 
-### 2. Serve the files
+Set `AllowedOrigins` to the real uploader domain (behind Access), not `*`.
 
-Serve the HTML files using any web server or open index.html directly in your browser.
+### Broker
 
-### 3. Upload files
+The broker mints the presigned URL after Cloudflare Access has authenticated the
+caller. It holds the AWS role permitted to `s3:PutObject` on the bucket; the browser
+holds nothing.
 
-1. Enter your AWS credentials
-2. Select region and bucket name  
-3. Choose a file (or drag & drop)
-4. Click "Start Upload"
+## Notes
 
-## AWS Permissions
-
-### Minimum Required
-- `s3:PutObject` - Upload files (includes multipart operations)
-
-### Recommended 
-- `s3:PutObject` - Upload files
-- `s3:AbortMultipartUpload` - Clean up failed uploads
-
-### Example IAM Policy
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:PutObject",
-                "s3:AbortMultipartUpload"
-            ],
-            "Resource": "arn:aws:s3:::your-bucket-name/*"
-        }
-    ]
-}
-```
-
-## How It Works
-
-This is a pure client-side JavaScript application that uses the AWS SDK to upload files directly from the browser to your S3 bucket. The upload happens client-side without any backend server - your files go straight from your browser to S3.
+- Single `PUT` supports objects up to 5 GB, which covers log bundles. Multipart and
+  resume were removed along with the credential-based flow.
+- To require callers to prove they requested KMS, sign the URL with
+  `ServerSideEncryption: aws:kms` and have the client replay the
+  `x-amz-server-side-encryption` header. The default-encryption path above avoids
+  this and is the recommended setup.
 
 ## Browser Compatibility
 
-- ✅ Chrome 60+
-- ✅ Firefox 60+ 
-- ✅ Safari 12+
-- ✅ Edge 79+
-
-Requires support for:
-- File API
-- Blob slicing
-- Promises/async-await
-- Drag & Drop API
-
-## Technical Details
-
-- **Language**: Pure JavaScript (no build process required)
-- **AWS SDK**: Loaded from CDN, uses S3 Multipart Upload API
-- **Part Size**: 100MB chunks for efficient large file handling
-- **Concurrency**: 3 simultaneous part uploads
-- **Progress Tracking**: Real-time with speed and ETA calculation
-- **Direct Upload**: Files stream from browser directly to S3 bucket
-
+- Chrome 60+, Firefox 60+, Safari 12+, Edge 79+
