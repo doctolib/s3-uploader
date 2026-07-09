@@ -1,10 +1,21 @@
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListPartsCommand } from 'https://cdn.skypack.dev/@aws-sdk/client-s3@3.637.0';
+// The AWS SDK is loaded on demand (credential mode only) via dynamic import,
+// so the default presigned flow never pulls third-party code. See loadSdk().
+const SDK_URL = 'https://cdn.skypack.dev/@aws-sdk/client-s3@3.637.0';
+
+// Presigned uploads must go to an AWS S3 endpoint, never an arbitrary host, so
+// a pasted or tampered URL cannot be used to exfiltrate the file elsewhere.
+// Tighten these to the exact bucket host in production if you want.
+const ALLOWED_S3_HOSTS = ['s3.eu-central-1.amazonaws.com'];
+const ALLOWED_S3_HOST_SUFFIXES = ['.s3.eu-central-1.amazonaws.com', '.s3.amazonaws.com'];
+
+// Single PUT (presigned mode) is capped by S3 at 5 GB.
+const MAX_SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024;
 
 class S3Uploader {
     constructor() {
         this.partSize = 100 * 1024 * 1024; // Default 100MB, set from form in credential mode
-        this.concurrency = 3;
         this.s3 = null;
+        this.sdk = null;
         this.uploadId = null;
         this.parts = [];
         this.uploadedBytes = 0;
@@ -20,9 +31,45 @@ class S3Uploader {
         this.fetchUploadUrl();
     }
 
+    // Escape a value before it is placed into innerHTML. Filenames, bucket
+    // names and server messages are attacker-influenced, so interpolating them
+    // raw would allow script injection (a file named "<img onerror=...>").
+    escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (c) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+    }
+
+    // Reject anything that is not an https AWS S3 endpoint.
+    validateUploadUrl(raw) {
+        let url;
+        try {
+            url = new URL(raw);
+        } catch (e) {
+            throw new Error('Upload URL is not a valid URL');
+        }
+        if (url.protocol !== 'https:') {
+            throw new Error('Upload URL must use https');
+        }
+        const host = url.hostname.toLowerCase();
+        const allowed = ALLOWED_S3_HOSTS.includes(host)
+            || ALLOWED_S3_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+        if (!allowed) {
+            throw new Error(`Refusing to upload to an unexpected host: ${host}`);
+        }
+    }
+
+    // Load the AWS SDK once, only when credential mode is actually used.
+    async loadSdk() {
+        if (!this.sdk) {
+            this.sdk = await import(SDK_URL);
+        }
+        return this.sdk;
+    }
+
     // Show credential fields or the presigned URL field depending on the toggle.
-    // Fields hidden by the toggle are also emptied of the `required` obligation
-    // in JS validation, so a hidden section never blocks form submission.
+    // The credential inputs carry no `required` attribute; validation happens in
+    // uploadWithCredentials() so hidden fields never block submitting the form.
     setupModeToggle() {
         const toggle = document.getElementById('usePresigned');
         const presignedFields = document.getElementById('presignedFields');
@@ -32,24 +79,37 @@ class S3Uploader {
             const presigned = toggle.checked;
             presignedFields.style.display = presigned ? '' : 'none';
             credentialFields.style.display = presigned ? 'none' : '';
+            if (presigned) {
+                // Don't leave AWS keys sitting in hidden inputs.
+                document.getElementById('accessKey').value = '';
+                document.getElementById('secretKey').value = '';
+            }
         };
         toggle.addEventListener('change', apply);
         apply();
     }
 
-    // Presigned mode only: on load, ask the broker (behind Cloudflare Access)
-    // for a short-lived presigned PUT URL so the browser never handles AWS
-    // credentials. In staging the field can be filled manually instead.
-    async fetchUploadUrl() {
+    // Presigned mode only: ask the broker (behind Cloudflare Access) for a
+    // short-lived presigned PUT URL so the browser never handles AWS
+    // credentials. POST (not GET) so the response is not cacheable and can
+    // later carry a ticket id / filename; the broker must set no-store. With
+    // force=true the URL is refreshed at submit time so it has not expired.
+    async fetchUploadUrl(force = false) {
         const field = document.getElementById('presignedUrl');
         const toggle = document.getElementById('usePresigned');
-        if (!field || !toggle.checked || field.value.trim()) return;
+        if (!field || !toggle.checked) return;
+        if (!force && field.value.trim()) return;
         try {
-            const res = await fetch('/api/upload-url', { credentials: 'include' });
+            const res = await fetch('/api/upload-url', { method: 'POST', credentials: 'include' });
             if (!res.ok) throw new Error(`broker returned HTTP ${res.status}`);
             const data = await res.json();
             field.value = data.url;
         } catch (e) {
+            // In staging the user may paste a URL manually, so only surface an
+            // error at submit time when there is nothing usable in the field.
+            if (force && !field.value.trim()) {
+                throw new Error('Could not reach the upload service. Please retry in a moment.');
+            }
             console.warn('Could not fetch upload URL from broker (paste one to test):', e.message);
         }
     }
@@ -72,7 +132,7 @@ class S3Uploader {
                 fileLabel.style.backgroundColor = '';
 
                 if (this.resumeState && file.name === this.resumeState.fileName && file.size === this.resumeState.fileSize) {
-                    fileLabel.innerHTML = `📁 ${file.name} (${this.formatFileSize(file.size)}) <span style="color: #28a745;">✅ Ready to resume</span>`;
+                    fileLabel.innerHTML = `📁 ${this.escapeHtml(file.name)} (${this.formatFileSize(file.size)}) <span style="color: #28a745;">✅ Ready to resume</span>`;
                     fileLabel.style.borderColor = '#28a745';
                     fileLabel.style.backgroundColor = '#f8fff8';
                 }
@@ -106,7 +166,7 @@ class S3Uploader {
                 fileLabel.textContent = `📁 ${files[0].name} (${this.formatFileSize(files[0].size)})`;
 
                 if (this.resumeState && files[0].name === this.resumeState.fileName && files[0].size === this.resumeState.fileSize) {
-                    fileLabel.innerHTML = `📁 ${files[0].name} (${this.formatFileSize(files[0].size)}) <span style="color: #28a745;">✅ Ready to resume</span>`;
+                    fileLabel.innerHTML = `📁 ${this.escapeHtml(files[0].name)} (${this.formatFileSize(files[0].size)}) <span style="color: #28a745;">✅ Ready to resume</span>`;
                     fileLabel.style.borderColor = '#28a745';
                     fileLabel.style.backgroundColor = '#f8fff8';
                 }
@@ -136,7 +196,7 @@ class S3Uploader {
                 document.getElementById('objectName').value = this.resumeState.config.objectName || '';
 
                 const fileLabel = document.querySelector('.file-input-label');
-                fileLabel.innerHTML = `📁 Please select: <strong>${this.resumeState.fileName}</strong> (${this.formatFileSize(this.resumeState.fileSize)})`;
+                fileLabel.innerHTML = `📁 Please select: <strong>${this.escapeHtml(this.resumeState.fileName)}</strong> (${this.formatFileSize(this.resumeState.fileSize)})`;
                 fileLabel.style.borderColor = '#ff9500';
                 fileLabel.style.backgroundColor = '#fff8e1';
 
@@ -173,10 +233,18 @@ class S3Uploader {
     // --- Presigned URL flow: single PUT, no SDK, no credentials -------------
 
     async uploadWithPresignedUrl() {
+        if (this.file.size > MAX_SINGLE_PUT_BYTES) {
+            throw new Error('File is larger than the 5 GB single-upload limit.');
+        }
+
+        // Refresh from the broker at submit time so the URL is not stale; falls
+        // back to whatever is already in the field (a pasted URL in staging).
+        await this.fetchUploadUrl(true);
         const url = document.getElementById('presignedUrl').value.trim();
         if (!url) {
             throw new Error('No upload URL available. Reload the page or paste a presigned URL.');
         }
+        this.validateUploadUrl(url);
 
         this.startTime = Date.now();
         this.uploadedBytes = 0;
@@ -185,7 +253,7 @@ class S3Uploader {
         const totalTime = (Date.now() - this.startTime) / 1000;
         this.updateProgress(100, '✅ Upload completed successfully!');
         this.showSuccess(`
-            📁 File: ${this.file.name} (${this.formatFileSize(this.file.size)})<br>
+            📁 File: ${this.escapeHtml(this.file.name)} (${this.formatFileSize(this.file.size)})<br>
             ⏱️ Total time: ${this.formatTime(totalTime)}
         `);
     }
@@ -205,10 +273,15 @@ class S3Uploader {
                     this.updateProgress(pct, `📊 Uploading… ${pct.toFixed(0)}%`);
                 }
             };
-            xhr.onload = () =>
-                (xhr.status >= 200 && xhr.status < 300)
-                    ? resolve()
-                    : reject(new Error(`Upload failed: HTTP ${xhr.status} ${xhr.statusText}`));
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve();
+                } else if (xhr.status === 403) {
+                    reject(new Error('Upload link expired or was rejected. Reload the page and try again.'));
+                } else {
+                    reject(new Error(`Upload failed: HTTP ${xhr.status}`));
+                }
+            };
             xhr.onerror = () => reject(new Error('Network error during upload'));
             xhr.send(file);
         });
@@ -241,7 +314,8 @@ class S3Uploader {
         this.partSize = chunkSizeMB * 1024 * 1024;
         this.config.objectName = document.getElementById('objectName').value || this.file.name;
 
-        this.s3 = new S3Client({
+        const sdk = await this.loadSdk();
+        this.s3 = new sdk.S3Client({
             region: this.config.region,
             credentials: {
                 accessKeyId: this.config.accessKey,
@@ -263,7 +337,7 @@ class S3Uploader {
 
             this.updateProgress(0, '🚀 Starting multipart upload...');
 
-            const createCommand = new CreateMultipartUploadCommand({
+            const createCommand = new this.sdk.CreateMultipartUploadCommand({
                 Bucket: this.config.bucketName,
                 Key: this.config.objectName
             });
@@ -282,7 +356,7 @@ class S3Uploader {
         } catch (error) {
             if (this.uploadId) {
                 try {
-                    const abortCommand = new AbortMultipartUploadCommand({
+                    const abortCommand = new this.sdk.AbortMultipartUploadCommand({
                         Bucket: this.config.bucketName,
                         Key: this.config.objectName,
                         UploadId: this.uploadId
@@ -294,7 +368,7 @@ class S3Uploader {
             }
 
             if (error.name === 'PreconditionFailed' || error.code === 'PreconditionFailed') {
-                throw new Error(`❌ File "${this.config.objectName}" already exists and cannot be overwritten due to bucket policy.`);
+                throw new Error(`File "${this.config.objectName}" already exists and cannot be overwritten due to bucket policy.`);
             }
 
             throw error;
@@ -306,7 +380,7 @@ class S3Uploader {
         const end = Math.min(start + this.partSize, this.file.size);
         const partData = this.file.slice(start, end);
 
-        const uploadCommand = new UploadPartCommand({
+        const uploadCommand = new this.sdk.UploadPartCommand({
             Bucket: this.config.bucketName,
             Key: this.config.objectName,
             PartNumber: partNumber,
@@ -334,7 +408,7 @@ class S3Uploader {
     async completeMultipartUpload() {
         this.parts.sort((a, b) => a.PartNumber - b.PartNumber);
 
-        const completeCommand = new CompleteMultipartUploadCommand({
+        const completeCommand = new this.sdk.CompleteMultipartUploadCommand({
             Bucket: this.config.bucketName,
             Key: this.config.objectName,
             UploadId: this.uploadId,
@@ -369,8 +443,8 @@ class S3Uploader {
         this.resumeState = null;
         document.getElementById('uploadBtn').textContent = 'Start Upload';
         this.showSuccess(`
-            📁 File: ${this.file.name} (${this.formatFileSize(this.file.size)})<br>
-            📍 Destination: s3://${this.config.bucketName}/${this.config.objectName}<br>
+            📁 File: ${this.escapeHtml(this.file.name)} (${this.formatFileSize(this.file.size)})<br>
+            📍 Destination: s3://${this.escapeHtml(this.config.bucketName)}/${this.escapeHtml(this.config.objectName)}<br>
             ⏱️ Total time: ${this.formatTime(totalTime / 1000)}<br>
             📈 Average speed: ${avgSpeed.toFixed(1)} MB/s
         `);
@@ -418,13 +492,16 @@ class S3Uploader {
         const errorDiv = document.getElementById('errorMsg');
         errorDiv.className = 'error';
         errorDiv.style.display = 'block';
-        errorDiv.innerHTML = `❌ ${message}`;
+        // textContent, not innerHTML: messages can contain server text or a
+        // filename, and must never be interpreted as markup.
+        errorDiv.textContent = `❌ ${message}`;
     }
 
     showSuccess(message) {
         const successDiv = document.getElementById('successMsg');
         successDiv.className = 'success';
         successDiv.style.display = 'block';
+        // Callers pass a fixed template with dynamic values already escaped.
         successDiv.innerHTML = message;
     }
 
@@ -479,99 +556,110 @@ class S3Uploader {
         const dialog = document.getElementById('resumeDialog');
         const message = document.getElementById('resumeMessage');
         const progress = ((this.resumeState.uploadedParts.length * this.resumeState.partSize) / this.resumeState.fileSize * 100).toFixed(1);
-        message.innerHTML = `Found interrupted upload for "${this.resumeState.fileName}" (${progress}% completed).<br><br><strong>Please select the same file again to resume the upload.</strong>`;
+        message.innerHTML = `Found interrupted upload for "${this.escapeHtml(this.resumeState.fileName)}" (${progress}% completed).<br><br><strong>Please select the same file again to resume the upload.</strong>`;
         dialog.style.display = 'block';
     }
 
     async resumeUpload() {
+        // Validate credentials before touching resume state, so a missing key
+        // surfaces a clear error instead of wiping an interrupted upload.
+        const accessKey = document.getElementById('accessKey').value;
+        const secretKey = document.getElementById('secretKey').value;
+        if (!accessKey || !secretKey) {
+            throw new Error('Enter your AWS access key and secret key to resume');
+        }
+
+        const fileInput = document.getElementById('fileInput');
+        this.file = fileInput.files[0];
+        if (!this.file) {
+            throw new Error('Please select a file to resume the upload.');
+        }
+        if (this.file.name !== this.resumeState.fileName) {
+            throw new Error(`Please select the original file "${this.resumeState.fileName}".`);
+        }
+        if (this.file.size !== this.resumeState.fileSize) {
+            throw new Error(`File size mismatch. Expected ${this.formatFileSize(this.resumeState.fileSize)}, got ${this.formatFileSize(this.file.size)}.`);
+        }
+
+        this.config = {
+            accessKey,
+            secretKey,
+            region: this.resumeState.config.region,
+            bucketName: this.resumeState.config.bucketName,
+            objectName: this.resumeState.config.objectName
+        };
+        this.uploadId = this.resumeState.uploadId;
+        this.partSize = this.resumeState.partSize;
+        this.parts = this.resumeState.uploadedParts || [];
+
+        const sdk = await this.loadSdk();
+        this.s3 = new sdk.S3Client({
+            region: this.config.region,
+            credentials: {
+                accessKeyId: this.config.accessKey,
+                secretAccessKey: this.config.secretKey
+            },
+            forcePathStyle: false,
+            useAccelerateEndpoint: false,
+            useDualstackEndpoint: false
+        });
+
         try {
-            this.clearMessages();
-
-            const fileInput = document.getElementById('fileInput');
-            this.file = fileInput.files[0];
-
-            if (!this.file) {
-                throw new Error('Please select a file to resume the upload.');
-            }
-            if (this.file.name !== this.resumeState.fileName) {
-                throw new Error(`Please select the original file "${this.resumeState.fileName}".`);
-            }
-            if (this.file.size !== this.resumeState.fileSize) {
-                throw new Error(`File size mismatch. Expected ${this.formatFileSize(this.resumeState.fileSize)}, got ${this.formatFileSize(this.file.size)}.`);
-            }
-
-            this.config = {
-                accessKey: document.getElementById('accessKey').value,
-                secretKey: document.getElementById('secretKey').value,
-                region: this.resumeState.config.region,
-                bucketName: this.resumeState.config.bucketName,
-                objectName: this.resumeState.config.objectName
-            };
-            this.uploadId = this.resumeState.uploadId;
-            this.partSize = this.resumeState.partSize;
-            this.parts = this.resumeState.uploadedParts || [];
-            this.uploadedBytes = this.parts.length * this.partSize;
-
-            this.s3 = new S3Client({
-                region: this.config.region,
-                credentials: {
-                    accessKeyId: this.config.accessKey,
-                    secretAccessKey: this.config.secretKey
-                },
-                forcePathStyle: false,
-                useAccelerateEndpoint: false,
-                useDualstackEndpoint: false
-            });
-
             await this.verifyAndResumeUpload();
-
         } catch (error) {
-            console.error('Resume error:', error);
-            this.showError(`Resume failed: ${error.message}`);
-            this.clearResumeData();
+            console.error('Verify and resume error:', error);
+            // Only discard resume state when the upload genuinely no longer
+            // exists; transient errors should keep it so the user can retry.
+            if (error.code === 'NoSuchUpload' || /session expired/i.test(error.message)) {
+                this.clearResumeData();
+            }
+            throw new Error(`Resume failed: ${error.message}`);
         }
     }
 
     async verifyAndResumeUpload() {
         this.updateProgress(0, '🔍 Verifying upload state...');
 
+        const listCommand = new this.sdk.ListPartsCommand({
+            Bucket: this.config.bucketName,
+            Key: this.config.objectName,
+            UploadId: this.uploadId
+        });
+        let listResult;
         try {
-            const listCommand = new ListPartsCommand({
-                Bucket: this.config.bucketName,
-                Key: this.config.objectName,
-                UploadId: this.uploadId
-            });
-            const listResult = await this.s3.send(listCommand);
-
-            this.parts = listResult.Parts ? listResult.Parts.map(part => ({
-                ETag: part.ETag,
-                PartNumber: part.PartNumber
-            })) : [];
-
-            this.uploadedBytes = this.parts.length * this.partSize;
-
-            this.startTime = Date.now();
-            const currentProgress = (this.uploadedBytes / this.file.size) * 100;
-            this.updateProgress(currentProgress, `📊 Resuming from ${currentProgress.toFixed(1)}%...`);
-
-            const totalParts = Math.ceil(this.file.size / this.partSize);
-            const startPart = this.parts.length + 1;
-
-            if (startPart <= totalParts) {
-                for (let i = startPart; i <= totalParts; i++) {
-                    await this.uploadPart(i, totalParts);
-                }
-            }
-
-            await this.completeMultipartUpload();
-
+            listResult = await this.s3.send(listCommand);
         } catch (error) {
-            console.error('Verify and resume error:', error);
             if (error.code === 'NoSuchUpload') {
                 throw new Error('Upload session expired. Please start a new upload.');
             }
             throw error;
         }
+
+        this.parts = listResult.Parts ? listResult.Parts.map(part => ({
+            ETag: part.ETag,
+            PartNumber: part.PartNumber
+        })) : [];
+
+        // Sum the real part sizes rather than assuming every part is full, so
+        // the progress bar cannot exceed 100% when the last part is short.
+        this.uploadedBytes = listResult.Parts
+            ? listResult.Parts.reduce((sum, p) => sum + (p.Size || 0), 0)
+            : 0;
+
+        this.startTime = Date.now();
+        const currentProgress = (this.uploadedBytes / this.file.size) * 100;
+        this.updateProgress(currentProgress, `📊 Resuming from ${currentProgress.toFixed(1)}%...`);
+
+        const totalParts = Math.ceil(this.file.size / this.partSize);
+        const startPart = this.parts.length + 1;
+
+        if (startPart <= totalParts) {
+            for (let i = startPart; i <= totalParts; i++) {
+                await this.uploadPart(i, totalParts);
+            }
+        }
+
+        await this.completeMultipartUpload();
     }
 
     saveUploadState() {
@@ -582,11 +670,10 @@ class S3Uploader {
             partSize: this.partSize,
             uploadedParts: this.parts,
             config: {
-                accessKey: this.config.accessKey,
                 region: this.config.region,
                 bucketName: this.config.bucketName,
                 objectName: this.config.objectName || this.file.name
-                // Never save secretKey for security
+                // Never persist credentials (access key or secret) to storage.
             }
         };
         localStorage.setItem('s3_upload_state', JSON.stringify(uploadState));

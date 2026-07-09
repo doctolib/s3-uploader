@@ -67,10 +67,31 @@ holds nothing.
 ## Notes
 
 - Single `PUT` (presigned mode) supports objects up to 5 GB, which covers log bundles.
+  The client rejects larger files up front.
+- The presigned URL target is validated against an AWS S3 host allowlist before any
+  upload, so a pasted or tampered URL cannot redirect the file elsewhere.
 - To require callers to prove they requested KMS, sign the URL with
   `ServerSideEncryption: aws:kms` and have the client replay the
   `x-amz-server-side-encryption` header. The default-encryption path avoids this and is
   the recommended setup.
+
+### Broker contract
+
+- `POST /api/upload-url` (not GET, so the response is not cacheable). Returns
+  `{ "url": "https://<bucket>.s3.eu-central-1.amazonaws.com/..." }` and must send
+  `Cache-Control: no-store`.
+- Do **not** include `Content-Type` in the signed headers, or signatures will mismatch
+  for some file types.
+
+### Serving-layer hardening (follow-up, not in this repo)
+
+- The AWS SDK still loads from a public CDN in credential mode (dynamic import, only
+  when that mode is used). For a Tier 0 deployment, vendor the SDK into the served
+  bundle and add a strict Content-Security-Policy (`script-src 'self'`,
+  `connect-src 'self' https://<bucket>.s3.eu-central-1.amazonaws.com`).
+- Ship a **practitioner-facing build with the presigned flow only** (no toggle, no
+  credential inputs, no SDK). Keep the credential/multipart tool as a separate
+  internal-only page behind SSO. Same repo is fine; same served bundle is not.
 
 ## Browser Compatibility
 
