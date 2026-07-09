@@ -14,15 +14,59 @@
     <div class="container">
         <div class="header">
             <h1>🔐 Secure Log Uploader</h1>
-            <p>Upload log bundles directly to secure storage</p>
+            <p>Upload files to S3 with a presigned URL or AWS credentials</p>
         </div>
 
         <form id="uploadForm">
-            <!-- Test-mode field: in production the presigned URL is fetched from
-                 the broker behind Cloudflare Access and this stays hidden. -->
-            <div class="form-group" id="presignedUrlGroup">
-                <label for="presignedUrl">Upload URL (staging test only)</label>
-                <input type="text" id="presignedUrl" placeholder="Fetched automatically, or paste a presigned URL to test" autocomplete="off">
+            <div class="form-group">
+                <label class="mode-toggle">
+                    <input type="checkbox" id="usePresigned" checked>
+                    Use presigned URL (no AWS credentials needed)
+                </label>
+            </div>
+
+            <!-- Presigned mode: in production the URL is fetched from the broker
+                 behind Cloudflare Access; for staging tests it can be pasted. -->
+            <div id="presignedFields">
+                <div class="form-group">
+                    <label for="presignedUrl">Upload URL</label>
+                    <input type="text" id="presignedUrl" placeholder="Fetched automatically, or paste a presigned URL to test" autocomplete="off">
+                </div>
+            </div>
+
+            <!-- Credential mode: kept for other use cases (multipart upload). -->
+            <div id="credentialFields">
+                <div class="form-group">
+                    <label for="accessKey">AWS Access Key</label>
+                    <input type="text" id="accessKey" placeholder="AKIA..." autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label for="secretKey">AWS Secret Key</label>
+                    <input type="password" id="secretKey" placeholder="Your secret key" autocomplete="new-password">
+                </div>
+
+                <div class="form-group">
+                    <label for="bucketName">S3 Bucket Name</label>
+                    <input type="text" id="bucketName" placeholder="my-bucket">
+                </div>
+
+                <div class="form-group">
+                    <label for="chunkSize">Chunk Size</label>
+                    <select id="chunkSize">
+                        <option value="20">20 MB</option>
+                        <option value="50">50 MB</option>
+                        <option value="100" selected>100 MB</option>
+                        <option value="200">200 MB</option>
+                        <option value="500">500 MB</option>
+                        <option value="1024">1 GB</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="objectName">S3 Object Name (optional)</label>
+                    <input type="text" id="objectName" placeholder="Leave empty to keep original filename">
+                </div>
             </div>
 
             <div class="form-group">
@@ -53,6 +97,18 @@
 
         <div id="errorMsg"></div>
         <div id="successMsg"></div>
+
+        <!-- Resume dialog (credential mode) -->
+        <div class="overwrite-dialog" id="resumeDialog">
+            <div class="overwrite-content">
+                <h3>🔄 Resume Upload</h3>
+                <p id="resumeMessage">An interrupted upload was found. Do you want to resume it?</p>
+                <div class="overwrite-buttons">
+                    <button class="btn-secondary" id="cancelResume">Start New Upload</button>
+                    <button class="btn-primary" id="confirmResume">Yes, Resume</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="uploader.js"></script>
