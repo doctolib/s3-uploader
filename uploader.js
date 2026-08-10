@@ -28,7 +28,6 @@ class S3Uploader {
         this.setupModeToggle();
         this.checkForResumeableUpload();
         this.setupBucketNameCleaning();
-        this.fetchUploadUrl();
     }
 
     // Escape a value before it is placed into innerHTML. Filenames, bucket
@@ -87,31 +86,6 @@ class S3Uploader {
         };
         toggle.addEventListener('change', apply);
         apply();
-    }
-
-    // Presigned mode only: ask the broker (behind Cloudflare Access) for a
-    // short-lived presigned PUT URL so the browser never handles AWS
-    // credentials. POST (not GET) so the response is not cacheable and can
-    // later carry a ticket id / filename; the broker must set no-store. With
-    // force=true the URL is refreshed at submit time so it has not expired.
-    async fetchUploadUrl(force = false) {
-        const field = document.getElementById('presignedUrl');
-        const toggle = document.getElementById('usePresigned');
-        if (!field || !toggle.checked) return;
-        if (!force && field.value.trim()) return;
-        try {
-            const res = await fetch('/api/upload-url', { method: 'POST', credentials: 'include' });
-            if (!res.ok) throw new Error(`broker returned HTTP ${res.status}`);
-            const data = await res.json();
-            field.value = data.url;
-        } catch (e) {
-            // In staging the user may paste a URL manually, so only surface an
-            // error at submit time when there is nothing usable in the field.
-            if (force && !field.value.trim()) {
-                throw new Error('Could not reach the upload service. Please retry in a moment.');
-            }
-            console.warn('Could not fetch upload URL from broker (paste one to test):', e.message);
-        }
     }
 
     initializeUI() {
@@ -237,12 +211,9 @@ class S3Uploader {
             throw new Error('File is larger than the 5 GB single-upload limit.');
         }
 
-        // Refresh from the broker at submit time so the URL is not stale; falls
-        // back to whatever is already in the field (a pasted URL in staging).
-        await this.fetchUploadUrl(true);
         const url = document.getElementById('presignedUrl').value.trim();
         if (!url) {
-            throw new Error('No upload URL available. Reload the page or paste a presigned URL.');
+            throw new Error('Paste a presigned upload URL.');
         }
         this.validateUploadUrl(url);
 

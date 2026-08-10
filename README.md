@@ -1,13 +1,13 @@
-# Secure Log Uploader
+# S3 Uploader
 
 Client-side JavaScript application for uploading files to S3. Two modes, chosen with a
 toggle:
 
-- **Presigned URL** (default): the browser does a single HTTP `PUT` to a short-lived
-  presigned URL. No AWS credentials are handled in the browser. This is the mode used
-  by Secure Log Collection.
-- **AWS credentials**: the original multipart flow (with resume), kept for other use
-  cases where the operator has direct S3 access.
+- **AWS credentials** (default): the original multipart flow (with resume), for
+  operators with direct S3 access.
+- **Presigned URL**: paste a short-lived presigned `PUT` URL (however you obtained
+  it) and the browser does a single `PUT` to it. No AWS credentials are handled in
+  the browser.
 
 ## Features
 
@@ -23,15 +23,10 @@ toggle:
 
 ### Presigned URL mode
 
-1. The page is served behind Cloudflare Access (SSO + device posture for internal
-   users, one-time PIN for external practitioners).
-2. On load, the page calls the broker (`GET /api/upload-url`), which validates the
-   authenticated identity and returns a short-lived presigned `PUT` URL scoped to a
-   single object key.
-3. The browser `PUT`s the file straight to S3. No credentials, no backend upload hop,
-   no file on a support agent's machine.
-
-For staging tests, skip the broker and paste a presigned URL into the field.
+Paste a presigned `PUT` URL into the field. The browser then does a single `PUT`
+straight to that URL — no credentials, no backend upload hop, no AWS SDK. Getting a
+presigned URL in the first place (minting it, authenticating the request for it,
+scoping it to a bucket/key) is outside this repo.
 
 ### Credential mode
 
@@ -47,7 +42,7 @@ where handing the operator direct S3 access is acceptable.
 [
     {
         "AllowedHeaders": ["*"],
-        "AllowedMethods": ["PUT", "POST"],
+        "AllowedMethods": ["GET", "PUT", "POST", "DELETE"],
         "AllowedOrigins": ["https://your-uploader-domain"],
         "ExposeHeaders": ["ETag"],
         "MaxAgeSeconds": 3000
@@ -55,43 +50,21 @@ where handing the operator direct S3 access is acceptable.
 ]
 ```
 
-Set `AllowedOrigins` to the real uploader domain (behind Access), not `*`. `POST` is
-only needed for multipart (credential mode).
-
-### Broker (presigned mode)
-
-The broker mints the presigned URL after Cloudflare Access has authenticated the
-caller. It holds the AWS role permitted to `s3:PutObject` on the bucket; the browser
-holds nothing.
+Set `AllowedOrigins` to your uploader's real domain, not `*`. Presigned mode only
+ever needs `PUT`. Credential mode's multipart flow needs the rest: `POST` to create
+and complete the upload, `GET` for `ListParts` (resume), `DELETE` for
+`AbortMultipartUpload` (cleanup on failure).
 
 ## Notes
 
-- Single `PUT` (presigned mode) supports objects up to 5 GB, which covers log bundles.
-  The client rejects larger files up front.
+- Single `PUT` (presigned mode) supports objects up to 5 GB. The client rejects
+  larger files up front; there is no multipart or resume support in this mode.
 - The presigned URL target is validated against an AWS S3 host allowlist before any
   upload, so a pasted or tampered URL cannot redirect the file elsewhere.
 - To require callers to prove they requested KMS, sign the URL with
   `ServerSideEncryption: aws:kms` and have the client replay the
   `x-amz-server-side-encryption` header. The default-encryption path avoids this and is
   the recommended setup.
-
-### Broker contract
-
-- `POST /api/upload-url` (not GET, so the response is not cacheable). Returns
-  `{ "url": "https://<bucket>.s3.eu-central-1.amazonaws.com/..." }` and must send
-  `Cache-Control: no-store`.
-- Do **not** include `Content-Type` in the signed headers, or signatures will mismatch
-  for some file types.
-
-### Serving-layer hardening (follow-up, not in this repo)
-
-- The AWS SDK still loads from a public CDN in credential mode (dynamic import, only
-  when that mode is used). For a Tier 0 deployment, vendor the SDK into the served
-  bundle and add a strict Content-Security-Policy (`script-src 'self'`,
-  `connect-src 'self' https://<bucket>.s3.eu-central-1.amazonaws.com`).
-- Ship a **practitioner-facing build with the presigned flow only** (no toggle, no
-  credential inputs, no SDK). Keep the credential/multipart tool as a separate
-  internal-only page behind SSO. Same repo is fine; same served bundle is not.
 
 ## Browser Compatibility
 

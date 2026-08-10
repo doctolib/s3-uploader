@@ -6,31 +6,31 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Secure Log Uploader</title>
+    <title>S3 Uploader</title>
     <link rel="icon" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3e%3cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z' fill='%23667eea'/%3e%3cpath d='M14 2v6h6' stroke='%23764ba2' stroke-width='2' fill='none'/%3e%3cpath d='M12 11v6' stroke='white' stroke-width='2'/%3e%3cpath d='M15 14l-3-3-3 3' stroke='white' stroke-width='2' fill='none'/%3e%3c/svg%3e">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔐 Secure Log Uploader</h1>
+            <h1>🚀 S3 Uploader</h1>
             <p>Upload files to S3 with a presigned URL or AWS credentials</p>
         </div>
 
         <form id="uploadForm">
             <div class="form-group">
                 <label class="mode-toggle">
-                    <input type="checkbox" id="usePresigned" checked>
+                    <input type="checkbox" id="usePresigned">
                     Use presigned URL (no AWS credentials needed)
                 </label>
             </div>
 
-            <!-- Presigned mode: in production the URL is fetched from the broker
-                 behind Cloudflare Access; for staging tests it can be pasted. -->
+            <!-- Presigned mode: paste a presigned PUT URL. -->
             <div id="presignedFields">
                 <div class="form-group">
                     <label for="presignedUrl">Upload URL</label>
-                    <input type="text" id="presignedUrl" placeholder="Fetched automatically, or paste a presigned URL to test" autocomplete="off">
+                    <input type="text" id="presignedUrl" placeholder="Paste a presigned PUT URL" autocomplete="off">
+                    <p class="field-note">Single PUT only — no multipart, no resume. File must be 5 GB or smaller.</p>
                 </div>
             </div>
 

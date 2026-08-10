@@ -43,6 +43,12 @@ body {
     margin-bottom: 20px;
 }
 
+.field-note {
+    margin-top: 6px;
+    color: #666;
+    font-size: 13px;
+}
+
 .form-group label {
     display: block;
     margin-bottom: 5px;
